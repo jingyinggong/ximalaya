@@ -1,5 +1,4 @@
 const Crawler = require('crawler');
-const _ = require('lodash');
 const path = require('path');
 const fs = require('fs');
 
@@ -7,10 +6,9 @@ const book = require('./book.json');
 
 const {BID, BOOKNAME, PAGE_END} = book;
 
-const TEMPLATE_PAGE = `https://www.ximalaya.com/youshengshu/${BID}/pPID/`;
+const TEMPLATE_PAGE = `https://www.ximalaya.com/revision/play/v1/audio?id=PID&ptype=1`;
 
 const PAGE_START = 1;
-
 
 const REG_BID = /BID/;
 const REG_PID = /PID/;
@@ -22,7 +20,10 @@ const DATA = [];
 const ERROR_DATA = [];
 
 const JSON_FILE_NAME = `${DATA_PATH}list.json`;
+const JSON_FILE_NAME_MP3 = `${DATA_PATH}list-mp3.json`;
 const JSON_FILE_NAME_ERROR = `${DATA_PATH}list_error.json`;
+
+const metaData = require(JSON_FILE_NAME);
 
 const checkAndMakeDir = function(pathx) {
     if (!fs.existsSync(path.resolve(pathx))) {
@@ -31,19 +32,23 @@ const checkAndMakeDir = function(pathx) {
 }
 
 const writeJSON = function(filename, data) {
-    checkAndMakeDir(DATA_PATH);
-    data = _.orderBy(data, ['pid'], ['asc']);
+  if(data && data.length) {
     fs.writeFile(path.resolve(filename), JSON.stringify(data), function(){
         console.log(`${filename} saved!`);
     });
+  } else {
+    console.log('no data need to be saved!');
+  }
 }
 
-const getAQueue = function(start, end, template, reg) {
-    let arr = [];
-    for(let i = start; i < end; i++) {
-        arr.push(template.replace(reg, i));
+const getAQueue = function(data, template, reg) {
+  console.log(data)
+  return data.map((item, index)=>{
+    return {
+      uri: template.replace(reg, item.pid),
+      name: item.name
     }
-    return arr;
+  });
 }
 
 const tidyName = function(str) {
@@ -71,28 +76,33 @@ const getPid = (str) => {
 }
 
 const get_page_index = function(str) {
-    return str.match(/\d+/)[1];
+    return str.match(/id=(\d+)/)[1];
+}
+
+const updateMetaData = function(data = metaData, pid, src) {
+  for(let i = 0; i < data.length; i++) {
+    if(data[i].pid === pid) {
+      data[i].src = src;
+      break;
+    }
+  }
+
 }
 
 const initCrawler = function(queue) {
     var c = new Crawler({
-        maxConnections : 10,
-        callback : function (error, res, done) {
+        maxConnections : 20,
+        jQuery: false,
+        callback: function (error, res, done) {
             let index = get_page_index(res.options.uri);
-            console.log(`shit == ${index}`)
+            console.log(`uri: ${res.options.uri} and index: ${index}`)
             if(error) {
                 console.log(error);
                 ERROR_DATA.push(index);
             } else {
                 try {
-                  const $ = res.$;
-                  const $a = $('#anchor_sound_list ._Vc .text a');
-                  $a.each((index, item)=>{
-                    DATA.push({
-                      pid: getPid(item.attribs.href),
-                      name: tidyName(item.attribs.title)
-                    });
-                  });
+                  var music = JSON.parse(res.body);
+                  updateMetaData(metaData, index, music.data.src);
                 } catch(e) {
                     console.log('catchx ', e);
                     ERROR_DATA.push(index);
@@ -106,14 +116,14 @@ const initCrawler = function(queue) {
 
     c.on('drain',function(){
         console.log('crawler done');
-        writeJSON(JSON_FILE_NAME, DATA);
+        writeJSON(JSON_FILE_NAME_MP3, metaData);
         writeJSON(JSON_FILE_NAME_ERROR, ERROR_DATA);
     });
 
     return c;
 }
 
-const Q = getAQueue(PAGE_START, PAGE_END, TEMPLATE_PAGE, REG_PID);
+const Q = getAQueue(metaData, TEMPLATE_PAGE, REG_PID);
 
 initCrawler(Q);
 
